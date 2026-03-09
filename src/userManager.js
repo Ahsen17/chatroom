@@ -1,9 +1,10 @@
 const storage = require('./storage');
 
 class UserManager {
-  constructor() {
+  constructor(roomId, maxUsers = 20) {
+    this.roomId = roomId;
     this.onlineUsers = new Map();
-    this.maxUsers = 20;
+    this.maxUsers = maxUsers;
   }
 
   generateAvatar(seed) {
@@ -48,7 +49,7 @@ class UserManager {
       return null;
     }
 
-    const existingUser = storage.getUserByIP(ip);
+    const existingUser = storage.getUserByIP(ip, this.roomId);
     let finalNickname = nickname;
 
     if (!finalNickname) {
@@ -72,14 +73,16 @@ class UserManager {
     this.onlineUsers.set(ip, user);
 
     if (!existingUser) {
-      storage.saveUser({ ip, nickname: finalNickname, firstSeen: Date.now() });
+      storage.saveUser({ ip, nickname: finalNickname, firstSeen: Date.now() }, this.roomId);
     }
 
     return user;
   }
 
   removeUser(ip) {
+    const user = this.onlineUsers.get(ip);
     this.onlineUsers.delete(ip);
+    return user;
   }
 
   getUser(ip) {
@@ -102,4 +105,4 @@ class UserManager {
   }
 }
 
-module.exports = new UserManager();
+module.exports = UserManager;

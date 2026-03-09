@@ -2,6 +2,10 @@ const security = require('./security');
 const storage = require('./storage');
 
 class MessageHandler {
+  constructor(roomId) {
+    this.roomId = roomId;
+  }
+
   createMessage(type, content, sender) {
     const message = {
       type,
@@ -31,22 +35,26 @@ class MessageHandler {
     }
 
     const message = this.createMessage(type, content, sender);
-    storage.saveMessage(message);
+    storage.saveMessage(message, this.roomId);
 
     return message;
   }
 
   loadHistory(count = 20) {
-    return storage.loadRecentMessages(count);
+    return storage.loadRecentMessages(count, this.roomId);
   }
 
   loadMoreMessages(beforeTimestamp, count = 20) {
-    return storage.loadRecentMessages(count, beforeTimestamp);
+    return storage.loadRecentMessages(count, this.roomId, beforeTimestamp);
   }
 
   getMessagesSince(timestamp) {
-    return storage.getMessagesSince(timestamp);
+    return storage.getMessagesSince(timestamp, this.roomId);
+  }
+
+  getRecentMessages(count = 50) {
+    return storage.loadRecentMessages(count, this.roomId);
   }
 }
 
-module.exports = new MessageHandler();
+module.exports = MessageHandler;

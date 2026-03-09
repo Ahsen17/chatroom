@@ -6,10 +6,13 @@ const { v4: uuidv4 } = require('uuid');
 const websocketServer = require('./src/websocket');
 const storage = require('./src/storage');
 const logger = require('./src/logger');
-const messageHandler = require('./src/messageHandler');
 const security = require('./src/security');
+const RoomManager = require('./src/roomManager');
+const AdminAuth = require('./src/adminAuth');
 
 const PORT = process.env.PORT || 3000;
+const roomManager = new RoomManager();
+const adminAuth = new AdminAuth();
 
 const mimeTypes = {
   '.html': 'text/html',
@@ -53,6 +56,155 @@ const upload = multer({
   }
 });
 
+function handleAdminRoutes(req, res) {
+  if (req.url === '/admin' || req.url === '/admin/') {
+    const filePath = path.join(__dirname, 'public', 'admin.html');
+    fs.readFile(filePath, (error, content) => {
+      if (error) {
+        res.writeHead(404);
+        res.end('404 Not Found');
+      } else {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(content);
+      }
+    });
+    return true;
+  }
+
+  if (req.method === 'POST' && req.url === '/admin/login') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+      try {
+        const { username, password } = JSON.parse(body);
+        const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress;
+        const sessionId = await adminAuth.authenticate(username, password, ip);
+        if (sessionId) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ sessionId }));
+        } else {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: '用户名或密码错误' }));
+        }
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: '服务器错误' }));
+      }
+    });
+    return true;
+  }
+
+  const sessionId = req.headers['x-session-id'];
+  if (!adminAuth.validateSession(sessionId)) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: '未授权' }));
+    return true;
+  }
+
+  if (req.method === 'POST' && req.url === '/admin/rooms') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const { name, maxUsers } = JSON.parse(body);
+        const room = roomManager.createRoom(name, maxUsers || 20);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(room));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: '创建失败' }));
+      }
+    });
+    return true;
+  }
+
+  if (req.method === 'GET' && req.url === '/admin/rooms') {
+    const rooms = roomManager.getAllRooms();
+    const stats = roomManager.getRoomStats();
+    const result = rooms.map(room => {
+      const stat = stats.find(s => s.roomId === room.roomId);
+      return { ...room, onlineCount: stat?.onlineCount || 0 };
+    });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+    return true;
+  }
+
+  if (req.method === 'PUT' && req.url.startsWith('/admin/rooms/')) {
+    const roomId = req.url.split('/')[3];
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const { isActive } = JSON.parse(body);
+        roomManager.updateRoomStatus(roomId, isActive);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: '更新失败' }));
+      }
+    });
+    return true;
+  }
+
+  if (req.method === 'DELETE' && req.url.startsWith('/admin/rooms/')) {
+    const roomId = req.url.split('/')[3];
+    try {
+      roomManager.deleteRoom(roomId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '删除失败' }));
+    }
+    return true;
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/admin/logs')) {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const date = url.searchParams.get('date') || new Date().toISOString().split('T')[0];
+    const logFile = path.join(__dirname, 'logs', `chatroom-${date}.log`);
+
+    if (fs.existsSync(logFile)) {
+      const content = fs.readFileSync(logFile, 'utf-8');
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end(content);
+    } else {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '日志文件不存在' }));
+    }
+    return true;
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/admin/messages')) {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const roomId = url.searchParams.get('roomId');
+    const date = url.searchParams.get('date') || new Date().toISOString().split('T')[0];
+
+    if (!roomId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '缺少roomId参数' }));
+      return true;
+    }
+
+    const messageFile = path.join(__dirname, 'data', 'messages', roomId, `${date}.jsonl`);
+    if (fs.existsSync(messageFile)) {
+      const content = fs.readFileSync(messageFile, 'utf-8');
+      const lines = content.trim().split('\n').filter(line => line);
+      const messages = lines.map(line => JSON.parse(line));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(messages));
+    } else {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify([]));
+    }
+    return true;
+  }
+
+  return false;
+}
+
 const server = http.createServer((req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
@@ -69,6 +221,10 @@ const server = http.createServer((req, res) => {
 
   if (process.env.ALLOWED_ORIGIN) {
     res.setHeader('Access-Control-Allow-Origin', process.env.ALLOWED_ORIGIN);
+  }
+
+  if (req.url.startsWith('/admin')) {
+    if (handleAdminRoutes(req, res)) return;
   }
 
   if (req.method === 'POST' && req.url === '/upload') {
@@ -111,8 +267,22 @@ const server = http.createServer((req, res) => {
 
     const url = new URL(req.url, `http://${req.headers.host}`);
     const since = parseInt(url.searchParams.get('since')) || 0;
+    const roomId = url.searchParams.get('roomId');
 
-    const messages = messageHandler.getMessagesSince(since);
+    if (!roomId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '缺少roomId参数' }));
+      return;
+    }
+
+    const room = roomManager.getRoomByInviteCode(roomId);
+    if (!room) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '聊天室不存在' }));
+      return;
+    }
+
+    const messages = room.messageHandler.getMessagesSince(since);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ messages }));
     return;
@@ -166,8 +336,10 @@ const server = http.createServer((req, res) => {
   });
 });
 
-websocketServer.initialize(server);
+adminAuth.initDefaultAdmin().then(() => {
+  websocketServer.initialize(server, roomManager);
 
-server.listen(PORT, () => {
-  logger.info(`聊天室服务器运行在 http://localhost:${PORT}`);
+  server.listen(PORT, () => {
+    logger.info(`聊天室服务器运行在 http://localhost:${PORT}`);
+  });
 });
