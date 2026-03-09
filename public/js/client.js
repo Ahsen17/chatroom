@@ -5,6 +5,7 @@ class ChatClient {
     this.roomId = null;
     this.roomName = null;
     this.inviteCode = null;
+    this.maxUsers = 20;
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
     this.shouldReconnect = true;
@@ -138,6 +139,7 @@ class ChatClient {
       case 'welcome':
         this.currentUser = data.user;
         this.sessionKey = data.sessionKey;
+        this.maxUsers = data.maxUsers || 20;
         this.updateOnlineCount(data.onlineCount);
         data.history.forEach(msg => this.renderMessage(msg, false));
         if (data.history.length > 0) {
@@ -174,11 +176,13 @@ class ChatClient {
 
       case 'user_joined':
         this.showSystemMessage(`${data.user.nickname} 加入了聊天室`);
+        if (data.maxUsers) this.maxUsers = data.maxUsers;
         this.updateOnlineCount(data.onlineCount);
         break;
 
       case 'user_left':
         this.showSystemMessage(`${data.user.nickname} 离开了聊天室`);
+        if (data.maxUsers) this.maxUsers = data.maxUsers;
         this.updateOnlineCount(data.onlineCount);
         break;
 
@@ -439,7 +443,7 @@ class ChatClient {
   }
 
   updateOnlineCount(count) {
-    this.onlineCount.textContent = `在线：${count}/20`;
+    this.onlineCount.textContent = `在线：${count}/${this.maxUsers}`;
   }
 
   formatTime(timestamp) {

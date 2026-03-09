@@ -43,7 +43,7 @@ class Room {
     const history = this.messageHandler.getRecentMessages(10);
     const onlineCount = this.userManager.getOnlineCount();
 
-    this.broadcast({type: 'user_joined', user, onlineCount}, ip);
+    this.broadcast({type: 'user_joined', user, onlineCount, maxUsers: this.maxUsers}, ip);
 
     return {user, history, onlineCount};
   }
@@ -52,7 +52,7 @@ class Room {
     const user = this.userManager.removeUser(ip);
     if (user) {
       const onlineCount = this.userManager.getOnlineCount();
-      this.broadcast({type: 'user_left', nickname: user.nickname, onlineCount});
+      this.broadcast({type: 'user_left', nickname: user.nickname, onlineCount, maxUsers: this.maxUsers});
       logger.info(`User left room ${this.roomId}: ${user.nickname}`);
     }
     this.removeClient(ip);

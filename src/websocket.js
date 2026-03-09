@@ -139,7 +139,8 @@ class WebSocketServer {
         type: 'welcome',
         user: result.user,
         history: result.history,
-        onlineCount: result.onlineCount
+        onlineCount: result.onlineCount,
+        maxUsers: room.maxUsers
       }));
       return;
     }
