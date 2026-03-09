@@ -1,12 +1,17 @@
 const WebSocket = require('ws');
 const userManager = require('./userManager');
 const messageHandler = require('./messageHandler');
+const logger = require('./logger');
+const Encryption = require('./encryption');
 
 class WebSocketServer {
   constructor() {
     this.wss = null;
     this.clients = new Map();
     this.heartbeatInterval = 30000;
+    this.sessionKeys = new Map();
+    this.mockIPPool = new Map();
+    this.mockIPCounter = 1;
   }
 
   initialize(server) {
@@ -26,13 +31,51 @@ class WebSocketServer {
   }
 
   getClientIP(req) {
-    return req.headers['x-forwarded-for']?.split(',')[0].trim() ||
+    const rawIP = req.headers['x-forwarded-for']?.split(',')[0].trim() ||
            req.headers['x-real-ip'] ||
            req.socket.remoteAddress;
+    return this.normalizeIP(rawIP);
+  }
+
+  normalizeIP(ip) {
+    if (ip === '::1' || ip === '::ffff:127.0.0.1') {
+      const normalized = '127.0.0.1';
+      const isLocalhost = true;
+
+      if (process.env.NODE_ENV === 'production' && process.env.ALLOW_LOCALHOST !== 'true') {
+        return 'BANNED_LOCALHOST';
+      }
+
+      if (process.env.NODE_ENV === 'development') {
+        if (!this.mockIPPool.has(ip)) {
+          this.mockIPPool.set(ip, `192.168.1.${this.mockIPCounter++}`);
+        }
+        return this.mockIPPool.get(ip);
+      }
+
+      return normalized;
+    }
+    return ip;
   }
 
   handleConnection(ws, ip) {
-    console.log(`新用户连接: ${ip}`);
+    if (ip === 'BANNED_LOCALHOST') {
+      ws.send(JSON.stringify({ type: 'error', message: '生产环境不允许localhost连接' }));
+      ws.close();
+      return;
+    }
+
+    if (this.clients.has(ip)) {
+      const oldWs = this.clients.get(ip);
+      oldWs.send(JSON.stringify({ type: 'kicked', message: '您的账号在另一处登录' }));
+      oldWs.close();
+      this.clients.delete(ip);
+    }
+
+    logger.info(`新用户连接: ${ip}`);
+
+    const sessionKey = Encryption.generateKey();
+    this.sessionKeys.set(ip, sessionKey);
 
     ws.on('message', (data) => {
       try {
@@ -48,7 +91,7 @@ class WebSocketServer {
     });
 
     ws.on('error', (error) => {
-      console.error(`WebSocket错误 (${ip}):`, error.message);
+      logger.error(`WebSocket错误 (${ip}): ${error.message}`);
     });
 
     ws.on('pong', () => {
@@ -61,7 +104,18 @@ class WebSocketServer {
   }
 
   handleMessage(ws, ip, payload) {
-    const { type, content, nickname } = payload;
+    const { type, content, nickname, beforeTimestamp } = payload;
+
+    if (type === 'check_history') {
+      const storage = require('./storage');
+      const existingUser = storage.getUserByIP(ip);
+      ws.send(JSON.stringify({
+        type: 'history_check',
+        hasHistory: !!existingUser,
+        user: existingUser
+      }));
+      return;
+    }
 
     if (type === 'join') {
       const user = userManager.addUser(ip, nickname);
@@ -70,9 +124,11 @@ class WebSocketServer {
         return;
       }
 
+      const sessionKey = this.sessionKeys.get(ip);
       ws.send(JSON.stringify({
         type: 'welcome',
         user,
+        sessionKey,
         history: messageHandler.loadHistory(),
         onlineCount: userManager.getOnlineCount()
       }));
@@ -86,6 +142,15 @@ class WebSocketServer {
       return;
     }
 
+    if (type === 'load_more') {
+      const messages = messageHandler.loadMoreMessages(beforeTimestamp);
+      ws.send(JSON.stringify({
+        type: 'history_loaded',
+        messages
+      }));
+      return;
+    }
+
     const user = userManager.getUser(ip);
     if (!user) {
       ws.send(JSON.stringify({ type: 'error', message: '请先加入聊天室' }));
@@ -94,9 +159,22 @@ class WebSocketServer {
 
     if (type === 'text' || type === 'image') {
       try {
-        const message = messageHandler.validateAndProcess(type, content, user, ip);
+        const sessionKey = this.sessionKeys.get(ip);
+        const decryptedContent = content.encrypted ? Encryption.decrypt(content.data, sessionKey) : content;
+        const message = messageHandler.validateAndProcess(type, decryptedContent, user, ip);
         userManager.updateActivity(ip);
-        this.broadcast(message);
+
+        const encryptedMessage = { ...message };
+        this.clients.forEach((client, clientIP) => {
+          const clientKey = this.sessionKeys.get(clientIP);
+          if (clientKey) {
+            encryptedMessage.content = Encryption.encrypt(message.content, clientKey);
+            encryptedMessage.encrypted = true;
+          }
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify(encryptedMessage));
+          }
+        });
       } catch (error) {
         ws.send(JSON.stringify({ type: 'error', message: error.message }));
       }
@@ -106,7 +184,7 @@ class WebSocketServer {
   handleDisconnect(ip) {
     const user = userManager.getUser(ip);
     if (user) {
-      console.log(`用户断开: ${user.nickname} (${ip})`);
+      logger.info(`用户断开: ${user.nickname} (${ip})`);
       userManager.removeUser(ip);
 
       this.broadcast({
@@ -117,6 +195,7 @@ class WebSocketServer {
     }
 
     this.clients.delete(ip);
+    this.sessionKeys.delete(ip);
   }
 
   broadcast(message, excludeIP = null) {

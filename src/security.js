@@ -1,14 +1,43 @@
 const he = require('he');
+const logger = require('./logger');
 
 class Security {
   constructor() {
     this.rateLimits = new Map();
     this.blacklist = new Map();
+    this.violations = new Map();
+    this.connectionAttempts = new Map();
     this.config = {
-      maxMessagesPerSecond: 5,
-      banDuration: 300000,
-      windowSize: 1000
+      maxMessagesPerWindow: 20,
+      windowSize: 180000,
+      banDuration: 1800000,
+      maxViolations: 5,
+      maxConnectionsPerMinute: 5
     };
+  }
+
+  validateNickname(nickname) {
+    if (typeof nickname !== 'string') return false;
+    if (nickname.length < 1 || nickname.length > 20) return false;
+    return /^[\u4e00-\u9fa5a-zA-Z0-9_]+$/.test(nickname);
+  }
+
+  checkConnectionLimit(ip) {
+    const now = Date.now();
+    if (!this.connectionAttempts.has(ip)) {
+      this.connectionAttempts.set(ip, []);
+    }
+
+    const attempts = this.connectionAttempts.get(ip);
+    const recentAttempts = attempts.filter(t => now - t < 60000);
+
+    if (recentAttempts.length >= this.config.maxConnectionsPerMinute) {
+      return false;
+    }
+
+    recentAttempts.push(now);
+    this.connectionAttempts.set(ip, recentAttempts);
+    return true;
   }
 
   escapeHtml(text) {
@@ -37,20 +66,26 @@ class Security {
     const timestamps = this.rateLimits.get(ip);
     const recentTimestamps = timestamps.filter(t => now - t < this.config.windowSize);
 
-    if (recentTimestamps.length >= this.config.maxMessagesPerSecond) {
-      this.addToBlacklist(ip);
+    if (recentTimestamps.length >= this.config.maxMessagesPerWindow) {
+      const violationCount = (this.violations.get(ip) || 0) + 1;
+      this.violations.set(ip, violationCount);
+
+      if (violationCount >= this.config.maxViolations) {
+        this.addToBlacklist(ip);
+      }
       return false;
     }
 
     recentTimestamps.push(now);
     this.rateLimits.set(ip, recentTimestamps);
+    this.violations.set(ip, 0);
     return true;
   }
 
   addToBlacklist(ip) {
     const until = Date.now() + this.config.banDuration;
     this.blacklist.set(ip, until);
-    console.log(`IP ${ip} 已被封禁至 ${new Date(until).toISOString()}`);
+    logger.warn(`IP ${ip} 已被封禁至 ${new Date(until).toISOString()}`);
   }
 
   isBlacklisted(ip) {

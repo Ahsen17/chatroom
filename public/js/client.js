@@ -2,27 +2,23 @@ class ChatClient {
   constructor() {
     this.ws = null;
     this.currentUser = null;
+    this.sessionKey = null;
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
+    this.shouldReconnect = true;
     this.messageArea = document.getElementById('messageArea');
+    this.messagesContainer = document.getElementById('messagesContainer');
     this.messageInput = document.getElementById('messageInput');
     this.sendBtn = document.getElementById('sendBtn');
     this.imageBtn = document.getElementById('imageBtn');
+    this.loadMoreBtn = document.getElementById('loadMoreBtn');
     this.onlineCount = document.getElementById('onlineCount');
+    this.oldestTimestamp = null;
 
     this.initializeUI();
   }
 
   initializeUI() {
-    const welcomeModal = new bootstrap.Modal(document.getElementById('welcomeModal'));
-    welcomeModal.show();
-
-    document.getElementById('joinBtn').addEventListener('click', () => {
-      const nickname = document.getElementById('nicknameInput').value.trim();
-      this.connect(nickname);
-      welcomeModal.hide();
-    });
-
     this.sendBtn.addEventListener('click', () => this.sendMessage());
     this.messageInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') this.sendMessage();
@@ -41,9 +37,21 @@ class ChatClient {
         bootstrap.Modal.getInstance(document.getElementById('imageModal')).hide();
       }
     });
+
+    this.loadMoreBtn.addEventListener('click', () => this.loadMoreMessages());
+
+    this.messageArea.addEventListener('scroll', () => {
+      if (this.messageArea.scrollTop === 0 && this.oldestTimestamp) {
+        this.loadMoreMessages();
+      }
+    });
+
+    document.addEventListener('paste', (e) => this.handlePaste(e));
+
+    this.connect();
   }
 
-  connect(nickname) {
+  connect(nickname = null) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}`;
 
@@ -52,7 +60,12 @@ class ChatClient {
     this.ws.onopen = () => {
       console.log('WebSocket连接已建立');
       this.reconnectAttempts = 0;
-      this.ws.send(JSON.stringify({ type: 'join', nickname }));
+
+      if (!nickname) {
+        this.ws.send(JSON.stringify({ type: 'check_history' }));
+      } else {
+        this.ws.send(JSON.stringify({ type: 'join', nickname }));
+      }
     };
 
     this.ws.onmessage = (event) => {
@@ -62,7 +75,9 @@ class ChatClient {
 
     this.ws.onclose = () => {
       console.log('WebSocket连接已关闭');
-      this.attemptReconnect();
+      if (this.shouldReconnect) {
+        this.attemptReconnect();
+      }
     };
 
     this.ws.onerror = (error) => {
@@ -83,16 +98,50 @@ class ChatClient {
 
   handleMessage(data) {
     switch (data.type) {
+      case 'history_check':
+        if (data.hasHistory && data.user) {
+          this.connect(data.user.nickname);
+        } else {
+          const welcomeModal = new bootstrap.Modal(document.getElementById('welcomeModal'));
+          welcomeModal.show();
+          document.getElementById('joinBtn').addEventListener('click', () => {
+            const nickname = document.getElementById('nicknameInput').value.trim();
+            this.connect(nickname);
+            welcomeModal.hide();
+          });
+        }
+        break;
+
       case 'welcome':
         this.currentUser = data.user;
+        this.sessionKey = data.sessionKey;
         this.updateOnlineCount(data.onlineCount);
         data.history.forEach(msg => this.renderMessage(msg, false));
+        if (data.history.length > 0) {
+          this.oldestTimestamp = data.history[0].timestamp;
+          this.loadMoreBtn.style.display = 'block';
+        }
         this.scrollToBottom();
         break;
 
       case 'text':
       case 'image':
-        this.renderMessage(data);
+        const decrypted = { ...data };
+        if (data.encrypted && this.sessionKey) {
+          decrypted.content = this.decrypt(data.content);
+        }
+        this.renderMessage(decrypted);
+        break;
+
+      case 'history_loaded':
+        if (data.messages.length > 0) {
+          const scrollHeight = this.messageArea.scrollHeight;
+          data.messages.forEach(msg => this.renderMessage(msg, false, true));
+          this.oldestTimestamp = data.messages[0].timestamp;
+          this.messageArea.scrollTop = this.messageArea.scrollHeight - scrollHeight;
+        } else {
+          this.loadMoreBtn.style.display = 'none';
+        }
         break;
 
       case 'user_joined':
@@ -105,13 +154,18 @@ class ChatClient {
         this.updateOnlineCount(data.onlineCount);
         break;
 
+      case 'kicked':
+        this.shouldReconnect = false;
+        this.showError(data.message);
+        break;
+
       case 'error':
         this.showError(data.message);
         break;
     }
   }
 
-  renderMessage(message, scroll = true) {
+  renderMessage(message, scroll = true, prepend = false) {
     const isOwn = this.currentUser && message.sender.nickname === this.currentUser.nickname;
 
     const messageCard = document.createElement('div');
@@ -142,7 +196,7 @@ class ChatClient {
     content.className = 'message-content';
 
     if (message.type === 'text') {
-      content.textContent = message.content;
+      content.textContent = he.decode(message.content);
     } else if (message.type === 'image') {
       const img = document.createElement('img');
       img.src = message.content;
@@ -158,20 +212,23 @@ class ChatClient {
 
     messageCard.appendChild(header);
     messageCard.appendChild(content);
-    this.messageArea.appendChild(messageCard);
+
+    if (prepend) {
+      this.messagesContainer.insertBefore(messageCard, this.messagesContainer.firstChild);
+    } else {
+      this.messagesContainer.appendChild(messageCard);
+    }
 
     if (scroll) {
       this.scrollToBottom();
     }
-
-    this.limitMessages();
   }
 
   showSystemMessage(text) {
     const systemMsg = document.createElement('div');
     systemMsg.className = 'system-message';
     systemMsg.textContent = text;
-    this.messageArea.appendChild(systemMsg);
+    this.messagesContainer.appendChild(systemMsg);
     this.scrollToBottom();
   }
 
@@ -179,12 +236,90 @@ class ChatClient {
     const content = this.messageInput.value.trim();
     if (!content) return;
 
-    this.ws.send(JSON.stringify({ type: 'text', content }));
+    const encrypted = this.sessionKey ? this.encrypt(content) : content;
+    this.ws.send(JSON.stringify({
+      type: 'text',
+      content: { encrypted: !!this.sessionKey, data: encrypted }
+    }));
     this.messageInput.value = '';
   }
 
   sendImageMessage(url) {
     this.ws.send(JSON.stringify({ type: 'image', content: url }));
+  }
+
+  loadMoreMessages() {
+    if (this.oldestTimestamp) {
+      this.ws.send(JSON.stringify({
+        type: 'load_more',
+        beforeTimestamp: this.oldestTimestamp
+      }));
+    }
+  }
+
+  async handlePaste(e) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (let item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        await this.uploadImage(file);
+        return;
+      }
+    }
+  }
+
+  async uploadImage(file) {
+    if (file.size > 5 * 1024 * 1024) {
+      this.showError('图片大小不能超过5MB');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('image', file);
+
+    try {
+      const response = await fetch('/upload', {
+        method: 'POST',
+        body: formData
+      });
+
+      const result = await response.json();
+
+      if (response.ok) {
+        this.sendImageMessage(result.path);
+      } else {
+        this.showError(result.error || '上传失败');
+      }
+    } catch (error) {
+      this.showError('上传失败: ' + error.message);
+    }
+  }
+
+  encrypt(text) {
+    const key = CryptoJS.enc.Base64.parse(this.sessionKey);
+    const iv = CryptoJS.lib.WordArray.random(12);
+    const encrypted = CryptoJS.AES.encrypt(text, key, {
+      iv: iv,
+      mode: CryptoJS.mode.GCM,
+      padding: CryptoJS.pad.NoPadding
+    });
+    return iv.toString(CryptoJS.enc.Base64) + ':' + encrypted.toString();
+  }
+
+  decrypt(ciphertext) {
+    const parts = ciphertext.split(':');
+    const iv = CryptoJS.enc.Base64.parse(parts[0]);
+    const encrypted = parts[1];
+    const key = CryptoJS.enc.Base64.parse(this.sessionKey);
+    const decrypted = CryptoJS.AES.decrypt(encrypted, key, {
+      iv: iv,
+      mode: CryptoJS.mode.GCM,
+      padding: CryptoJS.pad.NoPadding
+    });
+    return decrypted.toString(CryptoJS.enc.Utf8);
   }
 
   updateOnlineCount(count) {
@@ -206,16 +341,13 @@ class ChatClient {
     this.messageArea.scrollTop = this.messageArea.scrollHeight;
   }
 
-  limitMessages() {
-    const messages = this.messageArea.querySelectorAll('.message-card');
-    if (messages.length > 200) {
-      messages[0].remove();
-    }
-  }
-
   showError(message) {
     const toast = document.createElement('div');
     toast.className = 'error-toast alert alert-danger alert-dismissible fade show';
+    toast.style.position = 'fixed';
+    toast.style.top = '20px';
+    toast.style.right = '20px';
+    toast.style.zIndex = '9999';
     toast.innerHTML = `
       ${message}
       <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
