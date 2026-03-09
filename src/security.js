@@ -7,12 +7,16 @@ class Security {
     this.blacklist = new Map();
     this.violations = new Map();
     this.connectionAttempts = new Map();
+    this.pollRateLimits = new Map();
     this.config = {
       maxMessagesPerWindow: 20,
       windowSize: 180000,
       banDuration: 1800000,
       maxViolations: 5,
-      maxConnectionsPerMinute: 5
+      maxConnectionsPerMinute: 5,
+      maxPollsPerWindow: 3,
+      pollWindowSize: 5000,
+      pollBanDuration: 600000
     };
   }
 
@@ -47,9 +51,11 @@ class Security {
   validateUrl(url) {
     try {
       const parsed = new URL(url);
-      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+      // 允许http、https和相对路径（以/开头）
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:' || url.startsWith('/');
     } catch {
-      return false;
+      // 如果URL解析失败，检查是否为相对路径
+      return url.startsWith('/');
     }
   }
 
@@ -118,6 +124,31 @@ class Security {
     }
 
     return false;
+  }
+
+  checkPollRateLimit(ip) {
+    if (this.isBlacklisted(ip)) {
+      return false;
+    }
+
+    const now = Date.now();
+    if (!this.pollRateLimits.has(ip)) {
+      this.pollRateLimits.set(ip, []);
+    }
+
+    const timestamps = this.pollRateLimits.get(ip);
+    const recentTimestamps = timestamps.filter(t => now - t < this.config.pollWindowSize);
+
+    if (recentTimestamps.length >= this.config.maxPollsPerWindow) {
+      const until = Date.now() + this.config.pollBanDuration;
+      this.blacklist.set(ip, until);
+      logger.warn(`IP ${ip} 因轮询过于频繁被封禁至 ${new Date(until).toISOString()}`);
+      return false;
+    }
+
+    recentTimestamps.push(now);
+    this.pollRateLimits.set(ip, recentTimestamps);
+    return true;
   }
 }
 

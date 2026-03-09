@@ -54,6 +54,19 @@ class Storage {
     return messages.slice(-count);
   }
 
+  getMessagesSince(timestamp) {
+    const fileName = this.getTodayFileName();
+    if (!fs.existsSync(fileName)) {
+      return [];
+    }
+
+    const content = fs.readFileSync(fileName, 'utf-8');
+    const lines = content.trim().split('\n').filter(line => line);
+    const messages = lines.map(line => JSON.parse(line));
+
+    return messages.filter(m => m.timestamp > timestamp);
+  }
+
   checkUploadQuota(ip, fileSize) {
     const today = new Date().toISOString().split('T')[0];
     const key = `${ip}-${today}`;
