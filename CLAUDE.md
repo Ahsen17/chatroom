@@ -32,7 +32,7 @@ ALLOWED_ORIGIN=https://example.com npm start
 The backend follows a modular architecture with clear separation of concerns:
 
 - **server.js** - HTTP server entry point serving static files from `/public`, handling image uploads via multer (5MB limit), serving uploaded images from `/data/images`, and providing `/api/messages` endpoint for polling new messages
-- **src/websocket.js** - WebSocket server managing connections, broadcasting, and heartbeat mechanism (30s intervals)
+- **src/websocket.js** - WebSocket server managing connections, broadcasting, heartbeat mechanism (30s intervals), and enforcing one connection per IP (duplicate connections kick the old one)
 - **src/userManager.js** - User session management with 20-user limit, auto-generated Chinese nicknames (adjective + animal), and avatar generation via DiceBear API
 - **src/messageHandler.js** - Message validation, sanitization, history management (last 50 messages), and API for fetching messages since a timestamp
 - **src/security.js** - Rate limiting (20 msg/3min per IP), IP blacklisting (30-min bans), XSS protection, and poll rate limiting (3 requests/5sec, 10-min ban if exceeded)
@@ -49,6 +49,28 @@ The backend follows a modular architecture with clear separation of concerns:
 5. All messages persisted to daily JSONL files in `/data/messages/YYYY-MM-DD.jsonl`
 6. User registry maintained in `/data/users.jsonl`
 7. All operations logged via winston to `/logs/chatroom-YYYY-MM-DD.log`
+
+### WebSocket Message Protocol
+
+Client-to-Server messages:
+- `{type: 'check_history'}` - Check if user has previous session
+- `{type: 'join', nickname: string}` - Join chatroom with nickname
+- `{type: 'text', content: string}` - Send text message (plaintext)
+- `{type: 'image', content: string}` - Send image URL
+
+Server-to-Client messages:
+- `{type: 'history_check', hasHistory: boolean, user?: object}` - Response to history check
+- `{type: 'welcome', user: object, onlineCount: number, history: array}` - Successful join
+- `{type: 'user_joined', user: object, onlineCount: number}` - Another user joined
+- `{type: 'user_left', nickname: string, onlineCount: number}` - User disconnected
+- `{type: 'text'|'image', ...message}` - Broadcast message
+- `{type: 'error', message: string}` - Error notification
+- `{type: 'kicked', message: string}` - Duplicate connection detected
+
+Connection handling:
+- One connection per IP address (duplicate connections kick the old one)
+- Client auto-reconnects up to 5 times with exponential backoff
+- Heartbeat pings every 30 seconds to maintain connection
 
 ### Frontend Architecture
 
@@ -79,10 +101,10 @@ The backend follows a modular architecture with clear separation of concerns:
 - Automatic IP blacklisting for rate limit violations
 - Image URLs are validated before acceptance
 - Message length validation enforced server-side
-- Security headers: X-Content-Type-Options, X-Frame-Options, Content-Security-Policy
+- Security headers: X-Content-Type-Options, X-Frame-Options, Content-Security-Policy (allows scripts from cdn.jsdelivr.net and cdnjs.cloudflare.com)
 - Image uploads restricted to image/* MIME types only
 - Upload quota enforcement (100MB per IP per day)
-- AES-256-GCM encryption available for sensitive data via encryption.js module
+- Messages are currently transmitted in plaintext (encryption.js module exists but is not actively used in message flow)
 
 ## Data Persistence
 
