@@ -43,6 +43,10 @@ class MessageHandler {
   loadMoreMessages(beforeTimestamp, count = 20) {
     return storage.loadRecentMessages(count, beforeTimestamp);
   }
+
+  getMessagesSince(timestamp) {
+    return storage.getMessagesSince(timestamp);
+  }
 }
 
 module.exports = new MessageHandler();

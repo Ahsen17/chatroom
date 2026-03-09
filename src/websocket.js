@@ -160,7 +160,7 @@ class WebSocketServer {
     if (type === 'text' || type === 'image') {
       try {
         const sessionKey = this.sessionKeys.get(ip);
-        const decryptedContent = content.encrypted ? Encryption.decrypt(content.data, sessionKey) : content;
+        const decryptedContent = content.encrypted ? Encryption.decrypt(content.data, sessionKey) : (content.data || content);
         const message = messageHandler.validateAndProcess(type, decryptedContent, user, ip);
         userManager.updateActivity(ip);
 
