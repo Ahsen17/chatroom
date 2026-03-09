@@ -94,10 +94,81 @@ function handleAdminRoutes(req, res) {
     return true;
   }
 
+  if (req.method === 'POST' && req.url === '/admin/logout') {
+    const sessionId = req.headers['x-session-id'];
+    adminAuth.logout(sessionId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true }));
+    return true;
+  }
+
   const sessionId = req.headers['x-session-id'];
-  if (!adminAuth.validateSession(sessionId)) {
+  const currentUsername = adminAuth.validateSession(sessionId);
+  if (!currentUsername) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: '未授权' }));
+    return true;
+  }
+
+  if (req.method === 'GET' && req.url === '/admin/accounts') {
+    const accounts = adminAuth.getAllAdmins();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(accounts));
+    return true;
+  }
+
+  if (req.method === 'POST' && req.url === '/admin/accounts') {
+    if (currentUsername !== 'admin') {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '只有admin可以创建账户' }));
+      return true;
+    }
+
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+      try {
+        const { username, password } = JSON.parse(body);
+        const account = await adminAuth.createAdmin(username, password, currentUsername);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(account));
+      } catch (error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+    });
+    return true;
+  }
+
+  if (req.method === 'PUT' && req.url === '/admin/accounts/password') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+      try {
+        const { targetUsername, newPassword } = JSON.parse(body);
+        await adminAuth.changePassword(targetUsername, newPassword, currentUsername);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+    });
+    return true;
+  }
+
+  if (req.method === 'DELETE' && req.url.startsWith('/admin/accounts/')) {
+    const targetUsername = req.url.split('/')[3];
+    (async () => {
+      try {
+        await adminAuth.deleteAdmin(targetUsername, currentUsername);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+    })();
     return true;
   }
 
