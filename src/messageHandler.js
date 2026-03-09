@@ -36,8 +36,12 @@ class MessageHandler {
     return message;
   }
 
-  loadHistory(count = 50) {
+  loadHistory(count = 20) {
     return storage.loadRecentMessages(count);
+  }
+
+  loadMoreMessages(beforeTimestamp, count = 20) {
+    return storage.loadRecentMessages(count, beforeTimestamp);
   }
 }
 

@@ -5,7 +5,9 @@ class Storage {
   constructor() {
     this.dataDir = path.join(__dirname, '../data');
     this.messagesDir = path.join(this.dataDir, 'messages');
+    this.imagesDir = path.join(this.dataDir, 'images');
     this.usersFile = path.join(this.dataDir, 'users.jsonl');
+    this.uploadQuota = new Map();
     this.ensureDirectories();
   }
 
@@ -15,6 +17,9 @@ class Storage {
     }
     if (!fs.existsSync(this.messagesDir)) {
       fs.mkdirSync(this.messagesDir, { recursive: true });
+    }
+    if (!fs.existsSync(this.imagesDir)) {
+      fs.mkdirSync(this.imagesDir, { recursive: true });
     }
     if (!fs.existsSync(this.usersFile)) {
       fs.writeFileSync(this.usersFile, '');
@@ -32,7 +37,7 @@ class Storage {
     fs.appendFileSync(fileName, line);
   }
 
-  loadRecentMessages(count = 50) {
+  loadRecentMessages(count = 50, beforeTimestamp = null) {
     const fileName = this.getTodayFileName();
     if (!fs.existsSync(fileName)) {
       return [];
@@ -40,8 +45,27 @@ class Storage {
 
     const content = fs.readFileSync(fileName, 'utf-8');
     const lines = content.trim().split('\n').filter(line => line);
-    const messages = lines.map(line => JSON.parse(line));
+    let messages = lines.map(line => JSON.parse(line));
+
+    if (beforeTimestamp) {
+      messages = messages.filter(m => m.timestamp < beforeTimestamp);
+    }
+
     return messages.slice(-count);
+  }
+
+  checkUploadQuota(ip, fileSize) {
+    const today = new Date().toISOString().split('T')[0];
+    const key = `${ip}-${today}`;
+    const used = this.uploadQuota.get(key) || 0;
+    const maxDaily = 100 * 1024 * 1024;
+
+    if (used + fileSize > maxDaily) {
+      return false;
+    }
+
+    this.uploadQuota.set(key, used + fileSize);
+    return true;
   }
 
   saveUser(userInfo) {
