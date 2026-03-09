@@ -39,6 +39,7 @@ The project uses a custom build script (`build.js`) that compresses, minifies, a
 - Backend: Each module in `src/` is individually compressed and obfuscated using terser with aggressive settings (3-pass compression, toplevel mangling, property mangling for `_` prefixed names)
 - Frontend: JS/CSS/HTML files are minified and obfuscated (removes console logs, comments, and applies aggressive compression)
 - Output: All processed files are written to `dist/` directory with simplified `package.json` (devDependencies removed)
+- **IMPORTANT**: Global variables `adminClient` and `chatClient` are protected from mangling via the `reserved` option in terser config. If you add new global variables referenced in HTML onclick attributes, add them to the `reserved` array in `build.js`
 
 **Build tools:**
 - `terser` - JavaScript compression and obfuscation
@@ -71,11 +72,11 @@ The backend follows a modular architecture with clear separation of concerns:
 
 ### Data Flow
 
-1. Client connects with room invite code → WebSocket server routes to specific room → room assigns user via its userManager
+1. Client connects → sends `verify_invite` with invite code → WebSocket server validates and routes to specific room → sends `invite_verified` → client sends `check_history` → server checks for existing user → client joins with nickname → room assigns user via its userManager
 2. Messages flow through room's messageHandler → security validation → broadcast to all clients in that room
-3. Client polls `/api/messages?since=<timestamp>` every 5 seconds to fetch new messages (poll rate limited: max 3 requests per 5 seconds)
+3. Client polls `/api/messages?since=<timestamp>&roomId=<roomId>` every 5 seconds to fetch new messages (poll rate limited: max 3 requests per 5 seconds)
 4. Image uploads: POST to `/upload` → multer validation → quota check → stored in `/data/images/YYYY-MM-DD/` with UUID filename
-5. All messages persisted to daily JSONL files in `/data/messages/YYYY-MM-DD.jsonl`
+5. All messages persisted to daily JSONL files in `/data/messages/<roomId>/YYYY-MM-DD.jsonl` (organized by room and date)
 6. User registry maintained in `/data/users.jsonl`
 7. Room registry maintained in `/data/rooms.jsonl`
 8. Admin accounts stored in `/data/admins.jsonl` with bcrypt-hashed passwords
@@ -91,16 +92,20 @@ The backend follows a modular architecture with clear separation of concerns:
 ### WebSocket Message Protocol
 
 Client-to-Server messages:
+- `{type: 'verify_invite', inviteCode: string}` - Verify room invite code (first step after connection)
 - `{type: 'check_history'}` - Check if user has previous session
 - `{type: 'join', nickname: string}` - Join chatroom with nickname
 - `{type: 'text', content: string}` - Send text message (plaintext)
 - `{type: 'image', content: string}` - Send image URL
+- `{type: 'load_more', beforeTimestamp: number}` - Load older messages
 
 Server-to-Client messages:
+- `{type: 'invite_verified', roomId: string, roomName: string}` - Invite code verified successfully
 - `{type: 'history_check', hasHistory: boolean, user?: object}` - Response to history check
-- `{type: 'welcome', user: object, onlineCount: number, history: array}` - Successful join
-- `{type: 'user_joined', user: object, onlineCount: number}` - Another user joined
-- `{type: 'user_left', nickname: string, onlineCount: number}` - User disconnected
+- `{type: 'welcome', user: object, onlineCount: number, maxUsers: number, history: array}` - Successful join
+- `{type: 'user_joined', user: object, onlineCount: number, maxUsers: number}` - Another user joined
+- `{type: 'user_left', nickname: string, onlineCount: number, maxUsers: number}` - User disconnected
+- `{type: 'history_loaded', messages: array}` - Response to load_more request
 - `{type: 'text'|'image', ...message}` - Broadcast message
 - `{type: 'error', message: string}` - Error notification
 - `{type: 'kicked', message: string}` - Duplicate connection detected
@@ -154,7 +159,7 @@ Connection handling:
 ## Data Persistence
 
 The application uses JSONL (JSON Lines) format for append-only logging:
-- Messages: `/data/messages/YYYY-MM-DD.jsonl` (organized by date)
+- Messages: `/data/messages/<roomId>/YYYY-MM-DD.jsonl` (organized by room and date)
 - Users: `/data/users.jsonl` (IP addresses and join timestamps)
 - Rooms: `/data/rooms.jsonl` (room configurations and metadata)
 - Admin accounts: `/data/admins.jsonl` (usernames and bcrypt-hashed passwords)
@@ -162,6 +167,26 @@ The application uses JSONL (JSON Lines) format for append-only logging:
 - Application logs: `/logs/chatroom-YYYY-MM-DD.log` (winston daily rotation)
 
 When modifying storage logic, ensure JSONL format integrity (one JSON object per line).
+
+## Important Implementation Details
+
+**Room-specific considerations:**
+- Each room has its own `maxUsers` limit (configurable when creating the room)
+- The client must receive and store `maxUsers` from the server to display correct online count (e.g., "在线：5/10")
+- Server sends `maxUsers` in `welcome`, `user_joined`, and `user_left` messages
+- Client stores `maxUsers` in the ChatClient instance and uses it in `updateOnlineCount()`
+
+**WebSocket connection flow:**
+- Client must first verify invite code before joining
+- One connection per IP per room (duplicate connections kick the old one)
+- Connection state is tracked via `ws.roomId` property set after invite verification
+- Heartbeat mechanism uses `ws.isAlive` flag and 30-second ping/pong cycle
+
+**Message handling:**
+- Messages are HTML-encoded on the server using the `he` library before broadcasting
+- Client decodes messages using `he.decode()` before rendering
+- URL detection in text messages: images are auto-displayed, other URLs become clickable links
+- Image messages are separate from text messages (different `type` field)
 
 ## Admin Panel
 
