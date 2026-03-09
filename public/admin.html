@@ -44,6 +44,9 @@
           <a class="nav-link active" data-bs-toggle="tab" href="#roomsTab">聊天室管理</a>
         </li>
         <li class="nav-item">
+          <a class="nav-link" data-bs-toggle="tab" href="#accountsTab">账户管理</a>
+        </li>
+        <li class="nav-item">
           <a class="nav-link" data-bs-toggle="tab" href="#logsTab">日志审计</a>
         </li>
       </ul>
@@ -83,6 +86,43 @@
                   </tr>
                 </thead>
                 <tbody id="roomsList"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-pane fade" id="accountsTab">
+          <div class="card mb-3">
+            <div class="card-header">创建管理员账户</div>
+            <div class="card-body">
+              <div class="row">
+                <div class="col-md-4">
+                  <input type="text" class="form-control" id="newUsername" placeholder="用户名">
+                </div>
+                <div class="col-md-4">
+                  <input type="password" class="form-control" id="newPassword" placeholder="密码">
+                </div>
+                <div class="col-md-4">
+                  <button class="btn btn-primary" onclick="adminClient.createAccount()">创建账户</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">管理员账户列表</div>
+            <div class="card-body">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>用户名</th>
+                    <th>创建时间</th>
+                    <th>创建者</th>
+                    <th>最后登录</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="accountsList"></tbody>
               </table>
             </div>
           </div>

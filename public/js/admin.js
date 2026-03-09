@@ -1,9 +1,11 @@
 class AdminClient {
   constructor() {
     this.sessionId = localStorage.getItem('adminSession');
+    this.currentUsername = localStorage.getItem('adminUsername');
     if (this.sessionId) {
       this.showAdminPage();
       this.loadRooms();
+      this.loadAccounts();
     }
   }
 
@@ -21,9 +23,12 @@ class AdminClient {
       const data = await response.json();
       if (response.ok) {
         this.sessionId = data.sessionId;
+        this.currentUsername = username;
         localStorage.setItem('adminSession', this.sessionId);
+        localStorage.setItem('adminUsername', username);
         this.showAdminPage();
         this.loadRooms();
+        this.loadAccounts();
       } else {
         alert(data.error || '登录失败');
       }
@@ -34,7 +39,9 @@ class AdminClient {
 
   logout() {
     this.sessionId = null;
+    this.currentUsername = null;
     localStorage.removeItem('adminSession');
+    localStorage.removeItem('adminUsername');
     document.getElementById('loginPage').style.display = 'block';
     document.getElementById('adminPage').style.display = 'none';
   }
@@ -224,6 +231,126 @@ class AdminClient {
         this.loadRooms();
       } else {
         alert('删除失败');
+      }
+    } catch (error) {
+      alert('删除失败：' + error.message);
+    }
+  }
+
+  async loadAccounts() {
+    try {
+      const response = await fetch('/admin/accounts', {
+        headers: { 'X-Session-Id': this.sessionId }
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          this.logout();
+        }
+        return;
+      }
+
+      const accounts = await response.json();
+      const tbody = document.getElementById('accountsList');
+      const isAdmin = this.currentUsername === 'admin';
+
+      tbody.innerHTML = accounts.map(account => `
+        <tr>
+          <td><strong>${account.username}</strong></td>
+          <td>${new Date(account.createdAt).toLocaleString('zh-CN')}</td>
+          <td>${account.createdBy || '-'}</td>
+          <td>${account.lastLogin ? new Date(account.lastLogin).toLocaleString('zh-CN') : '从未登录'}</td>
+          <td>
+            ${(isAdmin || account.username === this.currentUsername) ?
+              `<button class="btn btn-sm btn-warning" onclick="adminClient.changePassword('${account.username}')">修改密码</button>` : ''}
+            ${isAdmin && account.username !== 'admin' ?
+              `<button class="btn btn-sm btn-danger" onclick="adminClient.deleteAccount('${account.username}')">删除</button>` : ''}
+          </td>
+        </tr>
+      `).join('');
+    } catch (error) {
+      console.error('加载账户失败：', error);
+    }
+  }
+
+  async createAccount() {
+    const username = document.getElementById('newUsername').value.trim();
+    const password = document.getElementById('newPassword').value;
+
+    if (!username || !password) {
+      alert('请输入用户名和密码');
+      return;
+    }
+
+    try {
+      const response = await fetch('/admin/accounts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Session-Id': this.sessionId
+        },
+        body: JSON.stringify({ username, password })
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        alert('账户创建成功');
+        document.getElementById('newUsername').value = '';
+        document.getElementById('newPassword').value = '';
+        this.loadAccounts();
+      } else {
+        alert(data.error || '创建失败');
+      }
+    } catch (error) {
+      alert('创建失败：' + error.message);
+    }
+  }
+
+  async changePassword(targetUsername) {
+    const newPassword = prompt(`请输入 ${targetUsername} 的新密码（至少6个字符）：`);
+    if (!newPassword) return;
+
+    if (newPassword.length < 6) {
+      alert('密码长度必须至少6个字符');
+      return;
+    }
+
+    try {
+      const response = await fetch('/admin/accounts/password', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Session-Id': this.sessionId
+        },
+        body: JSON.stringify({ targetUsername, newPassword })
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        alert('密码修改成功');
+      } else {
+        alert(data.error || '修改失败');
+      }
+    } catch (error) {
+      alert('修改失败：' + error.message);
+    }
+  }
+
+  async deleteAccount(targetUsername) {
+    if (!confirm(`确定要删除账户 ${targetUsername} 吗？此操作不可恢复！`)) return;
+
+    try {
+      const response = await fetch(`/admin/accounts/${targetUsername}`, {
+        method: 'DELETE',
+        headers: { 'X-Session-Id': this.sessionId }
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        alert('删除成功');
+        this.loadAccounts();
+      } else {
+        alert(data.error || '删除失败');
       }
     } catch (error) {
       alert('删除失败：' + error.message);
