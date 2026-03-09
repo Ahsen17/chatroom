@@ -186,6 +186,24 @@ class Storage {
 
     fs.writeFileSync(this.adminsFile, updatedAdmins.map(a => JSON.stringify(a)).join('\n') + '\n');
   }
+
+  updateAdminPassword(username, passwordHash) {
+    const admins = this.loadAdmins();
+    const updatedAdmins = admins.map(admin => {
+      if (admin.username === username) {
+        return { ...admin, passwordHash };
+      }
+      return admin;
+    });
+
+    fs.writeFileSync(this.adminsFile, updatedAdmins.map(a => JSON.stringify(a)).join('\n') + '\n');
+  }
+
+  deleteAdmin(username) {
+    const admins = this.loadAdmins();
+    const filteredAdmins = admins.filter(admin => admin.username !== username);
+    fs.writeFileSync(this.adminsFile, filteredAdmins.map(a => JSON.stringify(a)).join('\n') + '\n');
+  }
 }
 
 module.exports = new Storage();
