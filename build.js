@@ -84,6 +84,7 @@ async function compressFrontend() {
     },
     mangle: {
       toplevel: true,
+      reserved: ['adminClient', 'chatClient'], // 保护全局变量不被混淆
       properties: {
         regex: /^_/
       }
