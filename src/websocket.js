@@ -1,0 +1,148 @@
+const WebSocket = require('ws');
+const userManager = require('./userManager');
+const messageHandler = require('./messageHandler');
+
+class WebSocketServer {
+  constructor() {
+    this.wss = null;
+    this.clients = new Map();
+    this.heartbeatInterval = 30000;
+  }
+
+  initialize(server) {
+    this.wss = new WebSocket.Server({ server });
+
+    this.wss.on('connection', (ws, req) => {
+      const ip = this.getClientIP(req);
+
+      if (!userManager.canAddUser()) {
+        ws.send(JSON.stringify({ type: 'error', message: '聊天室已满（20/20）' }));
+        ws.close();
+        return;
+      }
+
+      this.handleConnection(ws, ip);
+    });
+  }
+
+  getClientIP(req) {
+    return req.headers['x-forwarded-for']?.split(',')[0].trim() ||
+           req.headers['x-real-ip'] ||
+           req.socket.remoteAddress;
+  }
+
+  handleConnection(ws, ip) {
+    console.log(`新用户连接: ${ip}`);
+
+    ws.on('message', (data) => {
+      try {
+        const payload = JSON.parse(data);
+        this.handleMessage(ws, ip, payload);
+      } catch (error) {
+        ws.send(JSON.stringify({ type: 'error', message: '消息格式错误' }));
+      }
+    });
+
+    ws.on('close', () => {
+      this.handleDisconnect(ip);
+    });
+
+    ws.on('error', (error) => {
+      console.error(`WebSocket错误 (${ip}):`, error.message);
+    });
+
+    ws.on('pong', () => {
+      ws.isAlive = true;
+    });
+
+    ws.isAlive = true;
+    this.clients.set(ip, ws);
+    this.startHeartbeat(ws);
+  }
+
+  handleMessage(ws, ip, payload) {
+    const { type, content, nickname } = payload;
+
+    if (type === 'join') {
+      const user = userManager.addUser(ip, nickname);
+      if (!user) {
+        ws.send(JSON.stringify({ type: 'error', message: '无法加入聊天室' }));
+        return;
+      }
+
+      ws.send(JSON.stringify({
+        type: 'welcome',
+        user,
+        history: messageHandler.loadHistory(),
+        onlineCount: userManager.getOnlineCount()
+      }));
+
+      this.broadcast({
+        type: 'user_joined',
+        user: { nickname: user.nickname, avatar: user.avatar },
+        onlineCount: userManager.getOnlineCount()
+      }, ip);
+
+      return;
+    }
+
+    const user = userManager.getUser(ip);
+    if (!user) {
+      ws.send(JSON.stringify({ type: 'error', message: '请先加入聊天室' }));
+      return;
+    }
+
+    if (type === 'text' || type === 'image') {
+      try {
+        const message = messageHandler.validateAndProcess(type, content, user, ip);
+        userManager.updateActivity(ip);
+        this.broadcast(message);
+      } catch (error) {
+        ws.send(JSON.stringify({ type: 'error', message: error.message }));
+      }
+    }
+  }
+
+  handleDisconnect(ip) {
+    const user = userManager.getUser(ip);
+    if (user) {
+      console.log(`用户断开: ${user.nickname} (${ip})`);
+      userManager.removeUser(ip);
+
+      this.broadcast({
+        type: 'user_left',
+        user: { nickname: user.nickname },
+        onlineCount: userManager.getOnlineCount()
+      });
+    }
+
+    this.clients.delete(ip);
+  }
+
+  broadcast(message, excludeIP = null) {
+    const data = JSON.stringify(message);
+
+    this.clients.forEach((client, ip) => {
+      if (ip !== excludeIP && client.readyState === WebSocket.OPEN) {
+        client.send(data);
+      }
+    });
+  }
+
+  startHeartbeat(ws) {
+    const interval = setInterval(() => {
+      if (!ws.isAlive) {
+        clearInterval(interval);
+        ws.terminate();
+        return;
+      }
+
+      ws.isAlive = false;
+      ws.ping();
+    }, this.heartbeatInterval);
+
+    ws.on('close', () => clearInterval(interval));
+  }
+}
+
+module.exports = new WebSocketServer();
