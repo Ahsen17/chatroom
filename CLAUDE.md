@@ -23,7 +23,33 @@ PORT=8080 npm start
 
 # Set allowed CORS origin (optional)
 ALLOWED_ORIGIN=https://example.com npm start
+
+# Build for production (compress, minify, obfuscate)
+npm run build
+
+# Clean build artifacts
+npm run clean
 ```
+
+## Build and Deployment
+
+The project uses a custom build script (`build.js`) that compresses, minifies, and obfuscates code for production deployment:
+
+**Build process:**
+- Backend: Each module in `src/` is individually compressed and obfuscated using terser with aggressive settings (3-pass compression, toplevel mangling, property mangling for `_` prefixed names)
+- Frontend: JS/CSS/HTML files are minified and obfuscated (removes console logs, comments, and applies aggressive compression)
+- Output: All processed files are written to `dist/` directory with simplified `package.json` (devDependencies removed)
+
+**Build tools:**
+- `terser` - JavaScript compression and obfuscation
+- `html-minifier-terser` - HTML minification
+- `clean-css` - CSS optimization
+
+**Deployment:**
+1. Run `npm run build` to generate `dist/` directory
+2. Deploy the `dist/` directory to production server
+3. Run `npm install --production` in `dist/` to install runtime dependencies only
+4. Start with `npm start`
 
 ## Architecture
 
