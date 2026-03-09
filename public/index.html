@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>聊天室</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <nav class="navbar navbar-dark bg-primary">
+    <div class="container-fluid">
+      <span class="navbar-brand mb-0 h1">💬 聊天室</span>
+      <span class="badge bg-light text-dark" id="onlineCount">在线：0/20</span>
+    </div>
+  </nav>
+
+  <div class="container-fluid h-100">
+    <div class="row h-100">
+      <div class="col-12 d-flex flex-column" style="height: calc(100vh - 56px);">
+        <div id="messageArea" class="flex-grow-1 overflow-auto p-3 bg-light">
+          <!-- 消息将在这里显示 -->
+        </div>
+
+        <div class="input-area bg-white border-top p-3">
+          <div class="input-group">
+            <input type="text" id="messageInput" class="form-control" placeholder="输入消息..." maxlength="1000">
+            <button class="btn btn-outline-secondary" type="button" id="imageBtn" title="发送图片URL">🖼️</button>
+            <button class="btn btn-primary" type="button" id="sendBtn">发送</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 欢迎模态框 -->
+  <div class="modal fade" id="welcomeModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">欢迎来到聊天室</h5>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label for="nicknameInput" class="form-label">请输入昵称（可选）</label>
+            <input type="text" class="form-control" id="nicknameInput" placeholder="留空将自动生成昵称" maxlength="20">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-primary" id="joinBtn">进入聊天室</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 图片URL模态框 -->
+  <div class="modal fade" id="imageModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">发送图片</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label for="imageUrlInput" class="form-label">图片URL</label>
+            <input type="url" class="form-control" id="imageUrlInput" placeholder="https://example.com/image.jpg" maxlength="500">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+          <button type="button" class="btn btn-primary" id="sendImageBtn">发送</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/js/client.js"></script>
+</body>
+</html>
