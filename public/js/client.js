@@ -14,6 +14,10 @@ class ChatClient {
     this.loadMoreBtn = document.getElementById('loadMoreBtn');
     this.onlineCount = document.getElementById('onlineCount');
     this.oldestTimestamp = null;
+    this.lastMessageTimestamp = 0;
+    this.pollInterval = null;
+    this.isSending = false;
+    this.pendingMessageId = null;
 
     this.initializeUI();
   }
@@ -119,9 +123,11 @@ class ChatClient {
         data.history.forEach(msg => this.renderMessage(msg, false));
         if (data.history.length > 0) {
           this.oldestTimestamp = data.history[0].timestamp;
+          this.lastMessageTimestamp = data.history[data.history.length - 1].timestamp;
           this.loadMoreBtn.style.display = 'block';
         }
         this.scrollToBottom();
+        this.startPolling();
         break;
 
       case 'text':
@@ -131,6 +137,12 @@ class ChatClient {
           decrypted.content = this.decrypt(data.content);
         }
         this.renderMessage(decrypted);
+        this.lastMessageTimestamp = Math.max(this.lastMessageTimestamp, decrypted.timestamp);
+
+        // 如果是自己发送的消息，解除输入禁用
+        if (this.currentUser && decrypted.sender.nickname === this.currentUser.nickname) {
+          this.setInputDisabled(false);
+        }
         break;
 
       case 'history_loaded':
@@ -196,7 +208,37 @@ class ChatClient {
     content.className = 'message-content';
 
     if (message.type === 'text') {
-      content.textContent = he.decode(message.content);
+      const decodedText = he.decode(message.content);
+      // 检测文本中的URL并转换为链接或图片
+      const urlPattern = /(https?:\/\/[^\s]+)/g;
+      const imagePattern = /\.(jpg|jpeg|png|gif|webp|bmp|svg)(\?[^\s]*)?$/i;
+      const parts = decodedText.split(urlPattern);
+
+      parts.forEach((part, index) => {
+        // 奇数索引是匹配到的URL（因为split会保留捕获组）
+        if (index % 2 === 1) {
+          // 检查是否为图片URL
+          if (imagePattern.test(part)) {
+            const img = document.createElement('img');
+            img.src = part;
+            img.className = 'message-image';
+            img.alt = '图片';
+            img.loading = 'lazy';
+            img.style.maxWidth = '300px';
+            img.onerror = () => {
+              // 如果图片加载失败，显示为链接
+              img.replaceWith(this.createLink(part));
+            };
+            content.appendChild(img);
+          } else {
+            // 普通链接
+            content.appendChild(this.createLink(part));
+          }
+        } else if (part) {
+          // 偶数索引是普通文本
+          content.appendChild(document.createTextNode(part));
+        }
+      });
     } else if (message.type === 'image') {
       const img = document.createElement('img');
       img.src = message.content;
@@ -205,7 +247,16 @@ class ChatClient {
       img.loading = 'lazy';
       img.onerror = () => {
         img.style.display = 'none';
-        content.textContent = '图片加载失败';
+        const errorText = document.createElement('div');
+        errorText.textContent = '图片加载失败';
+        errorText.style.color = '#dc3545';
+        content.appendChild(errorText);
+        const urlText = document.createElement('div');
+        urlText.style.fontSize = '0.8rem';
+        urlText.style.color = '#6c757d';
+        urlText.style.wordBreak = 'break-all';
+        urlText.textContent = message.content;
+        content.appendChild(urlText);
       };
       content.appendChild(img);
     }
@@ -232,9 +283,49 @@ class ChatClient {
     this.scrollToBottom();
   }
 
+  createLink(url) {
+    const link = document.createElement('a');
+    link.href = url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+
+    // 尝试提取文件名或显示简短URL
+    try {
+      const urlObj = new URL(url);
+      const pathname = urlObj.pathname;
+      const filename = pathname.split('/').pop();
+
+      if (filename && filename.length > 0) {
+        link.textContent = filename;
+        link.title = url;
+      } else {
+        link.textContent = url;
+      }
+    } catch {
+      link.textContent = url;
+    }
+
+    return link;
+  }
+
   sendMessage() {
     const content = this.messageInput.value.trim();
-    if (!content) return;
+    if (!content || this.isSending) return;
+
+    // 检测是否为URL
+    const urlPattern = /^https?:\/\/.+/i;
+    if (urlPattern.test(content)) {
+      // 检测是否为图片URL
+      const imagePattern = /\.(jpg|jpeg|png|gif|webp|bmp|svg)(\?.*)?$/i;
+      if (imagePattern.test(content)) {
+        this.sendImageMessage(content);
+        this.messageInput.value = '';
+        return;
+      }
+    }
+
+    this.setInputDisabled(true);
+    this.pendingMessageId = Date.now();
 
     const encrypted = this.sessionKey ? this.encrypt(content) : content;
     this.ws.send(JSON.stringify({
@@ -245,6 +336,11 @@ class ChatClient {
   }
 
   sendImageMessage(url) {
+    if (this.isSending) return;
+
+    this.setInputDisabled(true);
+    this.pendingMessageId = Date.now();
+
     this.ws.send(JSON.stringify({ type: 'image', content: url }));
   }
 
@@ -355,6 +451,71 @@ class ChatClient {
     document.body.appendChild(toast);
 
     setTimeout(() => toast.remove(), 5000);
+  }
+
+  startPolling() {
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+    }
+
+    this.pollInterval = setInterval(() => {
+      this.fetchNewMessages();
+    }, 5000);
+  }
+
+  stopPolling() {
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+      this.pollInterval = null;
+    }
+  }
+
+  async fetchNewMessages() {
+    try {
+      const response = await fetch(`/api/messages?since=${this.lastMessageTimestamp}`);
+      if (!response.ok) {
+        if (response.status === 429) {
+          this.showError('请求过于频繁，已被暂时限制');
+          this.stopPolling();
+        }
+        return;
+      }
+
+      const data = await response.json();
+      if (data.messages && data.messages.length > 0) {
+        data.messages.forEach(msg => {
+          this.renderMessage(msg);
+          this.lastMessageTimestamp = Math.max(this.lastMessageTimestamp, msg.timestamp);
+
+          // 如果是自己发送的消息，解除输入禁用
+          if (this.currentUser && msg.sender.nickname === this.currentUser.nickname) {
+            this.setInputDisabled(false);
+          }
+        });
+      }
+    } catch (error) {
+      console.error('获取新消息失败:', error);
+    }
+  }
+
+  setInputDisabled(disabled) {
+    this.isSending = disabled;
+    this.messageInput.disabled = disabled;
+    this.sendBtn.disabled = disabled;
+    this.imageBtn.disabled = disabled;
+
+    // 添加或移除加载图标
+    const loadingContainer = document.getElementById('loadingIconContainer');
+    if (disabled) {
+      loadingContainer.innerHTML = `
+        <span class="spinner-border spinner-border-sm text-primary" role="status" style="margin: 0 8px;">
+          <span class="visually-hidden">发送中...</span>
+        </span>
+      `;
+    } else {
+      loadingContainer.innerHTML = '';
+      this.pendingMessageId = null;
+    }
   }
 }
 
