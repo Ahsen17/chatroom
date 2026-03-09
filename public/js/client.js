@@ -2,7 +2,9 @@ class ChatClient {
   constructor() {
     this.ws = null;
     this.currentUser = null;
-    this.sessionKey = null;
+    this.roomId = null;
+    this.roomName = null;
+    this.inviteCode = null;
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
     this.shouldReconnect = true;
@@ -17,12 +19,16 @@ class ChatClient {
     this.lastMessageTimestamp = 0;
     this.pollInterval = null;
     this.isSending = false;
-    this.pendingMessageId = null;
 
     this.initializeUI();
   }
 
   initializeUI() {
+    document.getElementById('verifyInviteBtn').addEventListener('click', () => this.verifyInvite());
+    document.getElementById('inviteCodeInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') this.verifyInvite();
+    });
+
     this.sendBtn.addEventListener('click', () => this.sendMessage());
     this.messageInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') this.sendMessage();
@@ -33,6 +39,8 @@ class ChatClient {
       imageModal.show();
     });
 
+    this.loadMoreBtn.addEventListener('click', () => this.loadMoreMessages());
+
     document.getElementById('sendImageBtn').addEventListener('click', () => {
       const url = document.getElementById('imageUrlInput').value.trim();
       if (url) {
@@ -42,16 +50,19 @@ class ChatClient {
       }
     });
 
-    this.loadMoreBtn.addEventListener('click', () => this.loadMoreMessages());
-
-    this.messageArea.addEventListener('scroll', () => {
-      if (this.messageArea.scrollTop === 0 && this.oldestTimestamp) {
-        this.loadMoreMessages();
-      }
-    });
-
     document.addEventListener('paste', (e) => this.handlePaste(e));
 
+    const inviteModal = new bootstrap.Modal(document.getElementById('inviteModal'), {backdrop: 'static', keyboard: false});
+    inviteModal.show();
+  }
+
+  verifyInvite() {
+    const input = document.getElementById('inviteCodeInput').value.trim().toUpperCase();
+    if (!input) {
+      alert('请输入邀请码');
+      return;
+    }
+    this.inviteCode = input;
     this.connect();
   }
 
@@ -65,10 +76,10 @@ class ChatClient {
       console.log('WebSocket连接已建立');
       this.reconnectAttempts = 0;
 
-      if (!nickname) {
-        this.ws.send(JSON.stringify({ type: 'check_history' }));
+      if (!this.roomId) {
+        this.ws.send(JSON.stringify({ type: 'verify_invite', inviteCode: this.inviteCode }));
       } else {
-        this.ws.send(JSON.stringify({ type: 'join', nickname }));
+        this.ws.send(JSON.stringify({ type: 'join', nickname: nickname || '' }));
       }
     };
 
@@ -79,7 +90,7 @@ class ChatClient {
 
     this.ws.onclose = () => {
       console.log('WebSocket连接已关闭');
-      if (this.shouldReconnect) {
+      if (this.shouldReconnect && this.roomId) {
         this.attemptReconnect();
       }
     };
@@ -102,9 +113,16 @@ class ChatClient {
 
   handleMessage(data) {
     switch (data.type) {
+      case 'invite_verified':
+        this.roomId = data.roomId;
+        this.roomName = data.roomName;
+        document.title = `${data.roomName} - 聊天室`;
+        bootstrap.Modal.getInstance(document.getElementById('inviteModal')).hide();
+        this.ws.send(JSON.stringify({ type: 'check_history' }));
+        break;
+
       case 'history_check':
         if (data.hasHistory && data.user) {
-          // 直接使用当前连接发送 join 消息，不需要重新连接
           this.ws.send(JSON.stringify({ type: 'join', nickname: data.user.nickname }));
         } else {
           const welcomeModal = new bootstrap.Modal(document.getElementById('welcomeModal'));
@@ -146,8 +164,8 @@ class ChatClient {
       case 'history_loaded':
         if (data.messages.length > 0) {
           const scrollHeight = this.messageArea.scrollHeight;
-          data.messages.forEach(msg => this.renderMessage(msg, false, true));
-          this.oldestTimestamp = data.messages[0].timestamp;
+          data.messages.reverse().forEach(msg => this.renderMessage(msg, false, true));
+          this.oldestTimestamp = data.messages[data.messages.length - 1].timestamp;
           this.messageArea.scrollTop = this.messageArea.scrollHeight - scrollHeight;
         } else {
           this.loadMoreBtn.style.display = 'none';
@@ -328,7 +346,6 @@ class ChatClient {
     this.setInputDisabled(true);
     this.pendingMessageId = Date.now();
 
-    // 暂时禁用加密，直接发送明文
     const message = {
       type: 'text',
       content: content
@@ -474,8 +491,10 @@ class ChatClient {
   }
 
   async fetchNewMessages() {
+    if (!this.roomId) return;
+
     try {
-      const response = await fetch(`/api/messages?since=${this.lastMessageTimestamp}`);
+      const response = await fetch(`/api/messages?since=${this.lastMessageTimestamp}&roomId=${this.roomId}`);
       if (!response.ok) {
         if (response.status === 429) {
           this.showError('请求过于频繁，已被暂时限制');
