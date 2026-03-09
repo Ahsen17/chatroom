@@ -104,13 +104,14 @@ class ChatClient {
     switch (data.type) {
       case 'history_check':
         if (data.hasHistory && data.user) {
-          this.connect(data.user.nickname);
+          // 直接使用当前连接发送 join 消息，不需要重新连接
+          this.ws.send(JSON.stringify({ type: 'join', nickname: data.user.nickname }));
         } else {
           const welcomeModal = new bootstrap.Modal(document.getElementById('welcomeModal'));
           welcomeModal.show();
           document.getElementById('joinBtn').addEventListener('click', () => {
             const nickname = document.getElementById('nicknameInput').value.trim();
-            this.connect(nickname);
+            this.ws.send(JSON.stringify({ type: 'join', nickname }));
             welcomeModal.hide();
           });
         }
@@ -132,15 +133,12 @@ class ChatClient {
 
       case 'text':
       case 'image':
-        const decrypted = { ...data };
-        if (data.encrypted && this.sessionKey) {
-          decrypted.content = this.decrypt(data.content);
-        }
-        this.renderMessage(decrypted);
-        this.lastMessageTimestamp = Math.max(this.lastMessageTimestamp, decrypted.timestamp);
+        // 直接使用消息，不解密
+        this.renderMessage(data);
+        this.lastMessageTimestamp = Math.max(this.lastMessageTimestamp, data.timestamp);
 
         // 如果是自己发送的消息，解除输入禁用
-        if (this.currentUser && decrypted.sender.nickname === this.currentUser.nickname) {
+        if (this.currentUser && data.sender.nickname === this.currentUser.nickname) {
           this.setInputDisabled(false);
         }
         break;
@@ -310,6 +308,8 @@ class ChatClient {
 
   sendMessage() {
     const content = this.messageInput.value.trim();
+    console.log('sendMessage called, content:', content, 'isSending:', this.isSending);
+
     if (!content || this.isSending) return;
 
     // 检测是否为URL
@@ -324,14 +324,17 @@ class ChatClient {
       }
     }
 
+    console.log('准备发送文本消息:', content);
     this.setInputDisabled(true);
     this.pendingMessageId = Date.now();
 
-    const encrypted = this.sessionKey ? this.encrypt(content) : content;
-    this.ws.send(JSON.stringify({
+    // 暂时禁用加密，直接发送明文
+    const message = {
       type: 'text',
-      content: { encrypted: !!this.sessionKey, data: encrypted }
-    }));
+      content: content
+    };
+    console.log('发送消息:', message);
+    this.ws.send(JSON.stringify(message));
     this.messageInput.value = '';
   }
 

@@ -67,8 +67,15 @@ class WebSocketServer {
 
     if (this.clients.has(ip)) {
       const oldWs = this.clients.get(ip);
-      oldWs.send(JSON.stringify({ type: 'kicked', message: '您的账号在另一处登录' }));
-      oldWs.close();
+      const oldState = ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'][oldWs.readyState];
+      logger.info(`检测到重复连接 ${ip}，旧连接状态: ${oldState}`);
+
+      // 只有当旧连接仍然处于打开状态时才踢掉
+      if (oldWs.readyState === WebSocket.OPEN || oldWs.readyState === WebSocket.CONNECTING) {
+        logger.info(`踢掉旧连接: ${ip}`);
+        oldWs.send(JSON.stringify({ type: 'kicked', message: '您的账号在另一处登录' }));
+        oldWs.close();
+      }
       this.clients.delete(ip);
     }
 
@@ -106,9 +113,12 @@ class WebSocketServer {
   handleMessage(ws, ip, payload) {
     const { type, content, nickname, beforeTimestamp } = payload;
 
+    logger.info(`收到消息: IP=${ip}, type=${type}`);
+
     if (type === 'check_history') {
       const storage = require('./storage');
       const existingUser = storage.getUserByIP(ip);
+      logger.info(`历史检查: IP=${ip}, 有历史=${!!existingUser}`);
       ws.send(JSON.stringify({
         type: 'history_check',
         hasHistory: !!existingUser,
@@ -118,12 +128,14 @@ class WebSocketServer {
     }
 
     if (type === 'join') {
+      logger.info(`用户加入请求: IP=${ip}, nickname=${nickname}`);
       const user = userManager.addUser(ip, nickname);
       if (!user) {
         ws.send(JSON.stringify({ type: 'error', message: '无法加入聊天室' }));
         return;
       }
 
+      logger.info(`用户加入成功: ${user.nickname} (${ip})`);
       const sessionKey = this.sessionKeys.get(ip);
       ws.send(JSON.stringify({
         type: 'welcome',
@@ -153,29 +165,38 @@ class WebSocketServer {
 
     const user = userManager.getUser(ip);
     if (!user) {
+      logger.warn(`未找到用户: IP=${ip}, type=${type}`);
       ws.send(JSON.stringify({ type: 'error', message: '请先加入聊天室' }));
       return;
     }
 
     if (type === 'text' || type === 'image') {
       try {
-        const sessionKey = this.sessionKeys.get(ip);
-        const decryptedContent = content.encrypted ? Encryption.decrypt(content.data, sessionKey) : (content.data || content);
+        // 支持明文和加密两种格式
+        let decryptedContent;
+        if (typeof content === 'string') {
+          // 明文格式
+          decryptedContent = content;
+        } else if (content.encrypted) {
+          // 加密格式
+          const sessionKey = this.sessionKeys.get(ip);
+          decryptedContent = Encryption.decrypt(content.data, sessionKey);
+        } else {
+          // 旧格式兼容
+          decryptedContent = content.data || content;
+        }
+
         const message = messageHandler.validateAndProcess(type, decryptedContent, user, ip);
         userManager.updateActivity(ip);
 
-        const encryptedMessage = { ...message };
+        // 广播消息（不加密）
         this.clients.forEach((client, clientIP) => {
-          const clientKey = this.sessionKeys.get(clientIP);
-          if (clientKey) {
-            encryptedMessage.content = Encryption.encrypt(message.content, clientKey);
-            encryptedMessage.encrypted = true;
-          }
           if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify(encryptedMessage));
+            client.send(JSON.stringify(message));
           }
         });
       } catch (error) {
+        logger.error(`消息处理错误: ${error.message}`);
         ws.send(JSON.stringify({ type: 'error', message: error.message }));
       }
     }
@@ -183,6 +204,10 @@ class WebSocketServer {
 
   handleDisconnect(ip) {
     const user = userManager.getUser(ip);
+    const hasClient = this.clients.has(ip);
+
+    logger.info(`连接断开: ${ip}, 有用户: ${!!user}, 在clients中: ${hasClient}`);
+
     if (user) {
       logger.info(`用户断开: ${user.nickname} (${ip})`);
       userManager.removeUser(ip);
