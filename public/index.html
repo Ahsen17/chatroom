@@ -37,6 +37,26 @@
     </div>
   </div>
 
+  <!-- 邀请码模态框 -->
+  <div class="modal fade" id="inviteModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">输入邀请码</h5>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label for="inviteCodeInput" class="form-label">请输入6位邀请码</label>
+            <input type="text" class="form-control text-center" id="inviteCodeInput" placeholder="ABC123" maxlength="6" style="letter-spacing: 0.5em; font-size: 1.5rem; text-transform: uppercase;">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-primary" id="verifyInviteBtn">验证</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 欢迎模态框 -->
   <div class="modal fade" id="welcomeModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">

@@ -7,15 +7,20 @@
     "start": "NODE_ENV=production node server.js",
     "dev": "NODE_ENV=development node server.js"
   },
-  "keywords": ["chatroom", "websocket", "nodejs"],
+  "keywords": [
+    "chatroom",
+    "websocket",
+    "nodejs"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "ws": "^8.16.0",
+    "bcryptjs": "^3.0.3",
     "he": "^1.2.0",
+    "multer": "^1.4.5-lts.1",
+    "uuid": "^9.0.0",
     "winston": "^3.11.0",
     "winston-daily-rotate-file": "^4.7.1",
-    "multer": "^1.4.5-lts.1",
-    "uuid": "^9.0.0"
+    "ws": "^8.16.0"
   }
 }

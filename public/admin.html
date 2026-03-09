@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>管理后台</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+  <div id="loginPage" class="container mt-5">
+    <div class="row justify-content-center">
+      <div class="col-md-4">
+        <div class="card">
+          <div class="card-header">
+            <h4>管理员登录</h4>
+          </div>
+          <div class="card-body">
+            <div class="mb-3">
+              <label class="form-label">用户名</label>
+              <input type="text" class="form-control" id="username">
+            </div>
+            <div class="mb-3">
+              <label class="form-label">密码</label>
+              <input type="password" class="form-control" id="password">
+            </div>
+            <button class="btn btn-primary w-100" onclick="adminClient.login()">登录</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="adminPage" style="display:none;">
+    <nav class="navbar navbar-dark bg-dark">
+      <div class="container-fluid">
+        <span class="navbar-brand">管理后台</span>
+        <button class="btn btn-outline-light btn-sm" onclick="adminClient.logout()">登出</button>
+      </div>
+    </nav>
+
+    <div class="container-fluid mt-3">
+      <ul class="nav nav-tabs" id="adminTabs">
+        <li class="nav-item">
+          <a class="nav-link active" data-bs-toggle="tab" href="#roomsTab">聊天室管理</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" data-bs-toggle="tab" href="#logsTab">日志审计</a>
+        </li>
+      </ul>
+
+      <div class="tab-content mt-3">
+        <div class="tab-pane fade show active" id="roomsTab">
+          <div class="card mb-3">
+            <div class="card-header">创建聊天室</div>
+            <div class="card-body">
+              <div class="row">
+                <div class="col-md-6">
+                  <input type="text" class="form-control" id="roomName" placeholder="聊天室名称">
+                </div>
+                <div class="col-md-3">
+                  <input type="number" class="form-control" id="maxUsers" placeholder="最大人数" value="20">
+                </div>
+                <div class="col-md-3">
+                  <button class="btn btn-primary" onclick="adminClient.createRoom()">创建</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">聊天室列表</div>
+            <div class="card-body">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>邀请码</th>
+                    <th>名称</th>
+                    <th>在线/最大</th>
+                    <th>创建时间</th>
+                    <th>创建者</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="roomsList"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-pane fade" id="logsTab">
+          <div class="card mb-3">
+            <div class="card-header">系统日志</div>
+            <div class="card-body">
+              <div class="mb-3">
+                <label class="form-label">选择日期</label>
+                <input type="date" class="form-control" id="logDate" style="max-width: 200px;">
+                <button class="btn btn-primary mt-2" onclick="adminClient.loadSystemLogs()">查看日志</button>
+              </div>
+              <pre id="systemLogs" style="max-height: 400px; overflow-y: auto; background: #f5f5f5; padding: 10px;"></pre>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">聊天记录</div>
+            <div class="card-body">
+              <div class="row mb-3">
+                <div class="col-md-4">
+                  <label class="form-label">选择聊天室</label>
+                  <select class="form-control" id="chatRoomSelect"></select>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">选择日期</label>
+                  <input type="date" class="form-control" id="chatDate">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">&nbsp;</label>
+                  <button class="btn btn-primary d-block" onclick="adminClient.loadChatHistory()">查看记录</button>
+                </div>
+              </div>
+              <div id="chatHistory" style="max-height: 400px; overflow-y: auto;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/js/admin.js"></script>
+</body>
+</html>
